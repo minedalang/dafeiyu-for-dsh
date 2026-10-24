@@ -812,33 +812,13 @@ def end_quiet_mode(pet) -> list[str]:
 
 
 def add_agent_link_menu(menu: QMenu, pet) -> None:
-    """Agent 联动二级菜单（4 个 Agent 独立开关 + 自定义 Agent 三级子菜单 + 气泡提醒选项，失败/拒绝自动回滚勾选）。"""
+    """仅保留 DeepSeek Harness 联动入口。"""
     sub = add_submenu(menu, "Agent 联动", None)
     agent_cfg = dict(pet.cfg.get('agent_link', {}))
-    for agent_key, agent_label in (
-        ('dsh', 'DeepSeek Harness (DSH)'),
-        ('claude', 'Claude Code'),
-        ('cursor', 'Cursor'),
-        ('opencode', 'OpenCode'),
-    ):
-        act = sub.addAction(agent_label)
-        act.setCheckable(True)
-        act.setChecked(bool(agent_cfg.get(agent_key, False)))
-        act.toggled.connect(lambda on, k=agent_key, a=act: pet.toggle_agent_link(k, on, a))
-    # 自定义联动 Agent（config.json 的 agent_link.custom_agents，只读监听）：
-    # 收进三级子菜单，避免用户配了多个自定义通道后把联动菜单撑长。
-    custom_items = [
-        item for item in (agent_cfg.get('custom_agents') or [])
-        if str(item.get('key') or '')
-    ]
-    if custom_items:
-        custom_sub = add_submenu(sub, "自定义联动 Agent", None)
-        for item in custom_items:
-            key = str(item.get('key'))
-            act = custom_sub.addAction(str(item.get('name') or key))
-            act.setCheckable(True)
-            act.setChecked(bool(agent_cfg.get(key, False)))
-            act.toggled.connect(lambda on, k=key, a=act: pet.toggle_agent_link(k, on, a))
+    action = sub.addAction('DeepSeek Harness (DSH)')
+    action.setCheckable(True)
+    action.setChecked(bool(agent_cfg.get('dsh', False)))
+    action.toggled.connect(lambda on, a=action: pet.toggle_agent_link('dsh', on, a))
 
 
 def build_size_menu(menu: QMenu, pet, *, icons: bool = True) -> QMenu:

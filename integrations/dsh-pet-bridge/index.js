@@ -655,6 +655,79 @@ function writeRecord(extra) {
   }
 }
 
+
+// Optional Bilibili semantic hints for desktop pet. No URL, title or tool args on disk.
+// Only a *tool call* with an explicit Bilibili tool name or a Bilibili URL field
+// qualifies: generic browsing elsewhere must not be mislabelled "watching Bilibili".
+const BILI_URL = /(?:^|\/\/|\.)((?:www\.|m\.)?bilibili\.com|b23\.tv)(?=[\/:?#]|$)/i;
+function classifyBiliTool(tool, args) {
+  const name = String(tool || "").toLowerCase();
+  const biliTool = /bilibili|(?:^|[_-])bili(?:[_-]|$)/.test(name);
+  const obj = args && typeof args === "object" && !Array.isArray(args) ? args : {};
+  const url = [obj.url, obj.pageUrl, obj.targetUrl, obj.href].find(v => typeof v === "string") || "";
+  if (!biliTool && !BILI_URL.test(url)) return "";
+  if (/summar|summary|digest|subtitle|transcript/.test(name)) return "summarize";
+  if (/search|query|recommend|feed|popular/.test(name)) return "search";
+  if (/play|start_video/.test(name)) return "play";
+  return "browse"; // Opening a page is NOT proof video playback succeeded.
+}
+function emitBiliStage(stage, sessionId, agentName, callId) {
+  if (!stage) return;
+  writeRecord({ event: "dsh/activity", source: "dsh", site: "bilibili", stage,
+    sessionId, agentName, ...(callId ? { callId: `bili:${callId}` } : {}) });
+}
+
+// Called by the optional model-facing pet_action tool; the existing bridge
+// remains independent and its single writer/rotation/boot identity are reused.
+export async function submitPetAction(input, legacySpeech = "") {
+  // Backward compatibility: v8.1 callers used (mood, speech).
+  const args = typeof input === "string" ? { mood: input, speech: legacySpeech } : input;
+  if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("Invalid pet_action arguments");
+  if (Object.keys(args).some(k => !["mood", "speech", "animation", "duration_seconds", "priority"].includes(k))) {
+    throw new Error("Unsupported pet_action field");
+  }
+  const { mood, speech = "", animation = "", duration_seconds = 8, priority = "normal" } = args;
+  const moods = new Set(["search", "watch", "think", "happy", "work", "idle"]);
+  if (typeof mood !== "string" || !moods.has(mood)) throw new Error("Unsupported pet mood");
+  if (typeof speech !== "string" || speech.length > 90 || /[\x00-\x1f\x7f]/.test(speech)) {
+    throw new Error("Pet speech must be at most 90 printable characters");
+  }
+  if (typeof animation !== "string" || animation.length > 120 || /[\x00-\x1f\x7f]/.test(animation)) {
+    throw new Error("Invalid pet animation name");
+  }
+  if (!Number.isInteger(duration_seconds) || duration_seconds < 3 || duration_seconds > 30) {
+    throw new Error("duration_seconds must be an integer between 3 and 30");
+  }
+  if (!["ambient", "normal", "urgent"].includes(priority)) throw new Error("Unsupported pet priority");
+  const requestId = randomUUID();
+  const dir = bridgeDir();
+  const ackDir = path.join(dir, "acks");
+  const ackPath = path.join(ackDir, `${requestId}.json`);
+  fs.mkdirSync(ackDir, { recursive: true });
+  const event = encodeRecord({ event: "pet/action", action: "express", mood, speech,
+    animation, duration_seconds, priority, requestId });
+  try {
+    fs.appendFileSync(path.join(dir, INSTANCE_FILE), event, "utf8");
+  } catch (error) {
+    throw new Error(`Cannot write local pet event: ${error?.message || error}`);
+  }
+  const deadline = Date.now() + 8500;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    let receipt;
+    try { receipt = JSON.parse(fs.readFileSync(ackPath, "utf8")); }
+    catch (err) {
+      if (err?.code === "ENOENT" || err instanceof SyntaxError) continue;
+      throw new Error(`Could not read pet acknowledgement: ${err?.message || err}`);
+    }
+    try { fs.rmSync(ackPath, { force: true }); } catch {}
+    const detail = String(receipt.detail || receipt.status || "unknown").slice(0, 180);
+    if (receipt.status !== "accepted") throw new Error(`Pet rejected action: ${detail}`);
+    return `Pet accepted the request (${detail}). Animation/bubble rendering may still be deferred.`;
+  }
+  throw new Error("Pet did not acknowledge within 8.5s. Check DSH link is enabled, the pet is running and both processes use the same APPDATA directory. No GUI fallback was attempted.");
+}
+
 // ===== 问题写盘去重 =====
 // question/requested 由 assistant/message 的 tool-call 块与独立 tool/call 事件
 // 双通道产生：短窗口内同一条问题只落一条记录，杜绝重复气泡。
@@ -876,6 +949,10 @@ export function apply(ctx) {
               // 与下方独立 tool/call 事件同一条路径写入（按 callId 去重，避免双写）
               const cid = String(block.callId || block.id || "");
               noteToolCall(cid, block.name);
+              // Use the same call-id dedup gate as tool/call below.
+              if (!cid || !writtenToolCallIds.has(cid)) {
+                emitBiliStage(classifyBiliTool(block.name, block.arguments), sessionId, agentName, cid);
+              }
               if (cid && !writtenToolCallIds.has(cid)) {
                 writtenToolCallIds.add(cid);
                 // 脱敏：只写工具名/身份/序号，命令与参数指纹不落盘
@@ -929,6 +1006,7 @@ export function apply(ctx) {
           noteToolCall(d.callId, d.name);
           const cid = String(d.callId);
           if (!writtenToolCallIds.has(cid)) {
+            emitBiliStage(classifyBiliTool(d.name, d.arguments), sessionId, agentName, cid);
             writtenToolCallIds.add(cid);
             // 按需清理（防无限增长）
             if (writtenToolCallIds.size > 1024) writtenToolCallIds.clear();
@@ -1123,3 +1201,5 @@ export const __instanceTest = {
   queued: () => writeQueue.slice(),
   resetQueue: () => { writeQueue.length = 0; },
 };
+
+export const __biliTest = { classifyBiliTool };

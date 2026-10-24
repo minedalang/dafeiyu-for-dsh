@@ -401,7 +401,7 @@ class ChatWindow(QDialog):
     def _new_session(self):
         session = self.store.create(
             self.character_id,
-            self.settings.conversation_provider_id,
+            self.settings.conversation_config.provider_id,
             self.prompt_builder.effective_system_prompt(self.settings, self.character_id),
         )
         self.store.save(session)
@@ -917,6 +917,11 @@ class ChatWindow(QDialog):
             self.service.stop()
             return
         text = self.input.toPlainText().strip()
+        if text.lower().startswith("/agent") and (len(text) == 6 or text[6].isspace()):
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Agent 任务请使用 DSH",
+                                    "旧版 OpenClaw /agent 已移除。请打开 DSH 聊天窗口执行电脑任务。")
+            return
         if not text:
             return
         self.input.clear()
@@ -960,20 +965,7 @@ class ChatWindow(QDialog):
         # send() 内同步发出，晚赋值会让 `_started` 的 id 过滤恒命中）。
         request_id = uuid.uuid4().hex
         self._active_request_id = request_id
-        from ..desktop_agent import task_from_message, OpenClawProvider
-        task = task_from_message(text)
-        agent_history = [
-            {"role": item.role, "content": item.content, "created_at": item.created_at}
-            for item in self.session.messages[:-1]
-            if getattr(item, "role", "") in ("user", "assistant")
-            and str(getattr(item, "content", "") or "").strip()
-        ] if task is not None else []
-        agent_provider = (OpenClawProvider(
-            self.config.get("desktop_agent", {}), self.session.session_id, task, history=agent_history
-        ) if task is not None else None)
-        if agent_provider is not None:
-            messages = []  # Agent only receives explicit task, never pet chat history.
-        self.service.send(messages, config, request_id=request_id, provider=agent_provider)
+        self.service.send(messages, config, request_id=request_id)
         self._bottom()
 
     def _focus_chat(self) -> None:

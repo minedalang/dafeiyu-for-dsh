@@ -1,0 +1,14 @@
+AGENT-CONTEXT-SUMMARY-V7.md
+CHAT-API-SEPARATION-FIX.md
+docs/AGENT-CHAT-SETTINGS-V4.md
+docs/AGENT-SETTINGS-V2.md
+docs/OPENCLAW-DESKTOP-AGENT.md
+integrations/hermes-pet-bridge/README.md
+integrations/hermes-pet-bridge/__init__.py
+integrations/hermes-pet-bridge/plugin.yaml
+pet/agent_context.py
+pet/desktop_agent.py
+pet/windows_agent_mcp.py
+tests/test_agent_context_summary.py
+tests/test_agent_integration_v4.py
+tests/test_desktop_agent_bridge.py

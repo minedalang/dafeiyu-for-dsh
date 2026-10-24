@@ -609,11 +609,6 @@ def build_pet_controls(host) -> None:
     host.dialogue_scope_select.addItem("默认（全局文案）", "")
     for agent_key, agent_name in AgentLinkManager.AGENT_NAMES.items():
         host.dialogue_scope_select.addItem(f"{agent_name} 专属文案", agent_key)
-    # 自定义 Agent 也支持专属层（跟随 agent_link.custom_agents）
-    for item in (agent_link_cfg.get("custom_agents") or []):
-        if isinstance(item, dict) and str(item.get("key") or "").strip():
-            host.dialogue_scope_select.addItem(
-                f"{str(item.get('name') or item.get('key'))} 专属文案", str(item["key"]).strip())
     # 记住并恢复上次编辑层（设置页保存时写 dialogue_last_scope；未知值回落全局）
     initial_scope = str(host.config.get("dialogue_last_scope", "") or "")
     if host.dialogue_scope_select.findData(initial_scope) < 0:

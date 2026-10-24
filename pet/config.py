@@ -251,15 +251,9 @@ def _default_proactive_screen_data() -> dict:
 
 
 def _default_agent_link_data() -> dict:
+    """DSH 是唯一可联动的任务 Agent；本地 AI 生活与聊天配置不属于 Agent 联动。"""
     return {
         "dsh": False,
-        "claude": False,
-        "cursor": False,
-        "opencode": False,
-        # 自定义联动 Agent（协议见 docs/AGENT_LINK_PROTOCOL.md §4）：只读监听
-        # 用户指定的事件文件，不写外部配置、无需授权弹窗，默认空
-        "custom_agents": [],
-        # 音效配置
         "sound_enabled": False,
         "sound_start_path": "builtin:agent-start",
         "sound_done_path": "builtin:agent-done",
@@ -294,11 +288,6 @@ def _clean_click_sound_pack(value: Any) -> dict:
     }
 
 
-# 内置联动 Agent 键：custom_agents 的 key 不得与之重复
-_AGENT_LINK_BUILTIN_KEYS = ("dsh", "claude", "cursor", "opencode")
-# 自定义联动 Agent 条目上限（防配置文件被塞爆）
-_CUSTOM_AGENT_MAX = 8
-
 # DSH 联动线减法（2026-10）退役的 agent_link 子键：事件汇报概率门
 # （report_gates 及旧布尔/百分比前身）、卡住检测、行为模式检测、探索看门狗。
 # 读入即丢弃，不再写回。
@@ -319,67 +308,29 @@ _AGENT_LINK_REMOVED_KEYS = (
 )
 
 
-def _clean_custom_agents(raw: Any) -> list[dict]:
-    """清洗自定义联动 Agent 列表（agent_link.custom_agents）。
-
-    条目 {key, name, path}：key 为小写标识（不得与内置键/其他条目重复），
-    name 为显示名（缺省用 key），path 为事件文件路径（支持 ~，允许暂不存在）。
-    非法条目直接丢弃，超出上限截断。"""
-    if not isinstance(raw, list):
-        return []
-    result: list[dict] = []
-    seen: set[str] = set()
-    for item in raw:
-        if len(result) >= _CUSTOM_AGENT_MAX:
-            break
-        if not isinstance(item, dict):
-            continue
-        key = str(item.get("key") or "").strip().lower()
-        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", key):
-            continue
-        if key in _AGENT_LINK_BUILTIN_KEYS or key in seen:
-            continue
-        path = str(item.get("path") or "").strip()[:500]
-        if not path:
-            continue
-        name = str(item.get("name") or "").strip()[:50] or key
-        seen.add(key)
-        result.append({"key": key, "name": name, "path": path})
-    return result
-
-
 def _clean_agent_link_data(raw: Any) -> dict:
+    """仅允许 DSH 和自己的联动音效/台词设置；迁移时丢弃其他 Agent 配置。"""
     defaults = _default_agent_link_data()
     if not isinstance(raw, dict):
-        return dict(defaults)
+        return defaults
+    # 避免沿用旧版的 claude / cursor / opencode / custom_agents 及意外混入的外部键。
     result = dict(defaults)
-    # 保留传入的额外合法键（例如 thinking_text, thinking_texts 等）
-    result.update(raw)
-    result["custom_agents"] = _clean_custom_agents(raw.get("custom_agents"))
-    for key in (
-        "dsh",
-        "claude",
-        "cursor",
-        "opencode",
-        "sound_enabled",
-        "sound_start_enabled",
-        "sound_done_enabled",
-        "sound_error_enabled",
-    ):
+    for key in ("dsh", "sound_enabled", "sound_start_enabled",
+                "sound_done_enabled", "sound_error_enabled"):
         if key in raw:
             result[key] = bool(raw[key])
     for key in ("sound_start_path", "sound_done_path", "sound_error_path"):
         if key in raw:
-            val = str(raw[key] or "").strip()[:500]
-            result[key] = val or defaults[key]
-    if "sound_volume" in raw:
-        result["sound_volume"] = _float_or_default(raw.get("sound_volume"), defaults["sound_volume"], 0.0, 1.0)
-    if "sound_cooldown_seconds" in raw:
-        result["sound_cooldown_seconds"] = _float_or_default(raw.get("sound_cooldown_seconds"), defaults["sound_cooldown_seconds"], 0.0, 30.0)
-    # 减法后退役的键（概率门 / 卡住检测 / 行为模式 / 探索看门狗，含它们的旧
-    # 布尔/百分比前身）：读入即丢弃，保存时不再写回，配置里不留死键。
-    for dead_key in _AGENT_LINK_REMOVED_KEYS:
-        result.pop(dead_key, None)
+            value = str(raw[key] or "").strip()[:500]
+            result[key] = value or defaults[key]
+    for key in ("sound_volume", "sound_cooldown_seconds"):
+        if key in raw:
+            limit = 1.0 if key == "sound_volume" else 30.0
+            result[key] = _float_or_default(raw[key], defaults[key], 0.0, limit)
+    # 兼容 DSH 的自定义思考/事件台词，不接受任意未知的 Agent key。
+    for key in ("thinking_text", "thinking_texts"):
+        if key in raw:
+            result[key] = raw[key]
     return result
 
 
@@ -1270,7 +1221,6 @@ class Config:
             "network_info_menu_enabled": True,
             "proactive_screen": _default_proactive_screen_data(),
             "agent_link": _default_agent_link_data(),
-            "desktop_agent": {"enabled": False, "gateway_url": "http://127.0.0.1:18789", "agent_model": "openclaw/default", "windows_allowlist": [], "context_summary_enabled": True, "context_message_limit": 30},
             "file_interpret": _default_file_interpret_data(),
             "chat_ui_style": "modern",  # modern / classic（仅聊天窗口保留双实现）
             "chat_follow_pet": False,  # 聊天窗口是否跟随桌宠移动
@@ -1658,9 +1608,8 @@ class Config:
             self.data["proactive_screen"] = _merge_proactive_screen_data(raw["proactive_screen"])
         if "agent_link" in raw:
             self.data["agent_link"] = _merge_agent_link_data(raw["agent_link"])
-        if "desktop_agent" in raw:
-            from .desktop_agent import normalized_settings
-            self.data["desktop_agent"] = normalized_settings(raw["desktop_agent"])
+        # 旧 OpenClaw desktop_agent 配置不再导入，也不再写回磁盘。
+        self.data.pop("desktop_agent", None)
         if "file_interpret" in raw:
             self.data["file_interpret"] = _merge_file_interpret_data(raw["file_interpret"])
         self._migrate_click_sound_config(raw)
@@ -2211,6 +2160,10 @@ class Config:
         self.save()
 
     def set(self, key, value):
+        if key == "desktop_agent":
+            return  # 已退役的 OpenClaw 连接配置不能复活
+        if key == "agent_link":
+            value = _clean_agent_link_data(value)
         self.data[key] = value
         before_normalize = copy.deepcopy(self.data)
         if key in {
@@ -2241,7 +2194,6 @@ class Config:
             "throw_strength",
             "drop_gravity",
             "agent_link",
-            "desktop_agent",
             "file_interpret",
             "idle_low_fps_enabled",
             "idle_low_fps_threshold",
@@ -2313,11 +2265,9 @@ class Config:
         避免明文落盘——key 只保留在内存（self.data），重启需重输。
         """
         write_data = copy.deepcopy(self.data)
-        # Defense in depth: never persist a manually injected Gateway token.
-        agent = write_data.get("desktop_agent")
-        if isinstance(agent, dict):
-            for secret_name in ("token", "gateway_token", "api_key", "password"):
-                agent.pop(secret_name, None)
+        # 即使旧调用方注入了 OpenClaw 设置，也不允许再次写入磁盘。
+        write_data.pop("desktop_agent", None)
+        write_data["agent_link"] = _clean_agent_link_data(write_data.get("agent_link"))
         chat = write_data.get("chat")
         if isinstance(chat, dict):
             providers = chat.get("providers")

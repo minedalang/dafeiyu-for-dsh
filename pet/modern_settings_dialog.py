@@ -1973,21 +1973,6 @@ class ModernSettingsDialog(QDialog):
                         ),
                     ),
                     (
-                        "电脑 Agent · OpenClaw",
-                        claim(
-                            "desktop_agent_enabled",
-                            "desktop_agent_gateway",
-                            "desktop_agent_model",
-                            "desktop_agent_backend_model",
-                            "desktop_agent_thinking",
-                            "desktop_agent_context_summary",
-                            "desktop_agent_token",
-                            "desktop_agent_allowed_windows",
-                            "desktop_agent_test",
-                            "desktop_agent_test_result",
-                        ),
-                    ),
-                    (
                         "AI 自主行为",
                         claim(
                             "autonomy_provider",

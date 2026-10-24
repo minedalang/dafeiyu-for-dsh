@@ -11,7 +11,7 @@
 - 聊天窗口选择与设置页 API 列表的 `active_provider` 完全分开。设置页切换当前编辑/激活项，不会改变聊天窗口的 Provider。
 - 聊天窗口切换 Provider 时会清除之前的模型覆盖，改用新 Provider 配置的默认模型，避免把 Claude 模型名带到 GPT API 上。
 - 模型下拉框不会列出其他 Provider 的模型，防止只换模型字符串却仍沿用另一 API 的协议、URL 和凭据。手动输入模型 ID 时，请确认该模型由当前聊天 API 提供。
-- 联网搜索设置仍是聊天设置中的独立选项；OpenClaw 有自己独立的工具和联网配置。
+- 联网搜索设置仍是聊天设置中的独立选项；DSH 有自己独立的工具和联网配置。
 
 ## 旧配置迁移
 
@@ -20,7 +20,7 @@
 - 迁移后的 `chat_provider` 会保存到配置中。后续切换设置页 API 列表不会覆盖它。
 - `chat_model` 若等于该 Provider 的默认模型，会规范化为空覆盖值；这样修改 Provider 默认模型后，聊天窗口能自然跟随。
 
-## AI 自主行为与 OpenClaw
+## AI 自主行为与 DSH
 
 - **AI 自主行为**使用独立的 `autonomy_provider`、`autonomy_model` 和对应思考参数。
 - **OpenClaw Agent** 使用 OpenClaw 自身配置或其专用设置；不会因为切换普通聊天 API 而修改 OpenClaw 的全局默认模型。

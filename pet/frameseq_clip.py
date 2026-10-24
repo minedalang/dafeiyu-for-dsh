@@ -113,8 +113,10 @@ def _shared_prefetch_thread() -> QThread:
         app = QCoreApplication.instance()
         if app is not None:
             # 生产路径：exec() 退出时 aboutToQuit 收口
-            app.aboutToQuit.connect(
-                _shutdown_shared_prefetch, Qt.ConnectionType.UniqueConnection)
+            # UniqueConnection requires a QObject member method, not a Python
+            # module-level callable. The callback is idempotent, so normal
+            # connection is safe even if this thread is recreated.
+            app.aboutToQuit.connect(_shutdown_shared_prefetch)
         # 兜底：无 exec() 的上下文（pytest/脚本——QApplication 析构不发
         # aboutToQuit），atexit 在模块拆除前收口（幂等，注册一次即安）
         atexit.register(_shutdown_shared_prefetch)

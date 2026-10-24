@@ -301,7 +301,6 @@ python scripts/cleanup_mei_cache.py --delete
 - 内置 DSH 桥接插件（`integrations/dsh-pet-bridge`）与 Claude hooks 安装器：感知 AI Agent 状态并切换动作，支持开始干活、过程汇报、任务完成三种气泡反馈，右键 Agent 联动子菜单可独立开关。
 - **DSH 富事件状态**：thinking（思考）/ working（干活，带工具名）/ attention（需确认）/ error / idle 多态呈现，多会话按 attention > error > working > thinking > idle 聚合，子代理不抢状态；审批与提问为**纯提示常驻气泡**（引导回 DSH 界面处理），同一 Agent 的并发审批/提问按 `interaction_id` 互不覆盖。
 - **开机即按配置装配**：重启后已开启的 Agent 联动与主动识屏直接生效，不再需要手动展开一次菜单或开关一次设置对话框。
-- **自定义联动 Agent**：在 `config.json` 的 `agent_link.custom_agents` 里声明任意 Agent（key / 显示名 / 事件文件路径），桌宠即对其 JSONL 事件文件做只读监听，联动行为与内置 Agent 一致——不改代码即可接入任何能写本地文件的 Agent，协议详见 [`docs/AGENT_LINK_PROTOCOL.md`](docs/AGENT_LINK_PROTOCOL.md)。
 - **一键启动 DSH**：本机已在跑 dsh web（含官方 3080）时直接复用，不再拉起第二个实例；Windows 上 node/pnpm 解析覆盖 nvm-windows/nvm/fnm/Volta/scoop 等布局，也可用 `pnpm_bin` 配置键手动指定 pnpm 入口。
 
 ### 看看屏幕（Chat 版）

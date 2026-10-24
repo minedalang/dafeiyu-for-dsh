@@ -193,6 +193,11 @@ class AutonomyService(QObject):
         self._request_animations = ()
         self._cancelled = threading.Event()
         self._enabled = False
+        # DSH controls presentation during its work; the fish keeps independent
+        # life only when no DSH task or bounded external expression is active.
+        self._dsh_busy = False
+        self._external_lease_until = 0.0
+        self._external_resume_token = 0
         self._screen_enabled = False
         self._screen_whitelist = ()
         self._history = deque(maxlen=8)
@@ -228,6 +233,70 @@ class AutonomyService(QObject):
     @property
     def enabled(self) -> bool:
         return self._enabled
+
+    def _is_external_owner(self) -> bool:
+        return self._dsh_busy or time.monotonic() < self._external_lease_until
+
+    def set_dsh_busy(self, busy: bool) -> None:
+        """Switch ownership without disabling the user's autonomy setting."""
+        busy = bool(busy)
+        if busy == self._dsh_busy:
+            return
+        self._dsh_busy = busy
+        if busy:
+            self._invalidate_for_external(awakened=False)
+            self._monitor.publish(state="DSH 正在处理任务：自主行为暂停", next_decision_at=None)
+        else:
+            self._schedule_external_resume()
+
+    def can_accept_dsh_reaction(self, priority: str) -> tuple[bool, str]:
+        if priority not in ("ambient", "normal", "urgent"):
+            return False, "不支持的 DSH 动作优先级"
+        if self._pending_user_text or (self._busy and self._current_request_user):
+            return False, "主人正在直接和小鲸鱼互动，请稍后再试"
+        if not self._enabled:
+            return True, ""
+        if priority == "ambient" and self._plan_active:
+            return False, "桌宠正在自主活动；ambient 级别不打断"
+        if (priority != "urgent" and self._plan_active and
+                (self._sleep_held or self._plan_activity == "nap")):
+            return False, "桌宠正在睡觉；只有 urgent 才允许叫醒"
+        return True, ""
+
+    def begin_dsh_reaction(self, duration_seconds: int, priority: str) -> None:
+        """Yield the animation/speech lane for a bounded model-chosen reaction."""
+        self._external_lease_until = max(
+            self._external_lease_until, time.monotonic() + duration_seconds)
+        self._invalidate_for_external(awakened=priority == "urgent")
+        self._monitor.publish(state=f"DSH 指挥桌宠反应（{duration_seconds} 秒）",
+                              next_decision_at=None)
+        self._schedule_external_resume()
+
+    def _invalidate_for_external(self, *, awakened: bool) -> None:
+        if not self._enabled:
+            return
+        self._generation += 1
+        self._cancelled.set()
+        self._cancelled = threading.Event()
+        self._active_request = -1  # Ignore an already completed/obsolete LLM answer.
+        self._busy = False
+        self._speech_active = -1
+        self._speech_busy = False
+        self._cancel_plan(awakened=awakened)
+
+    def _schedule_external_resume(self) -> None:
+        if self._dsh_busy or not self._enabled:
+            return
+        self._external_resume_token += 1
+        token = self._external_resume_token
+        delay_ms = max(50, int((self._external_lease_until - time.monotonic()) * 1000) + 150)
+        def resume():
+            if token != self._external_resume_token or not self._enabled or self._is_external_owner():
+                return
+            self._monitor.publish(state="DSH 已空闲，自主生活恢复",
+                                  next_decision_at=time.time())
+            self._tick()
+        QTimer.singleShot(delay_ms, resume)
 
     def _next_speech_delay(self) -> float:
         return random.uniform(self._speech_interval_min_seconds,
@@ -380,6 +449,8 @@ class AutonomyService(QObject):
         self._replan_timer.start(delay_ms)
 
     def _replan_tick(self) -> None:
+        if self._is_external_owner():
+            return
         if (not self._enabled or not self._plan_active
                 or self._plan_activity == "nap"
                 or self._plan_deadline - time.monotonic() <= 50):
@@ -488,6 +559,8 @@ class AutonomyService(QObject):
 
     def _speech_tick(self) -> None:
         """Independently consider speaking during a long, otherwise silent plan."""
+        if self._is_external_owner():
+            return
         if (not self._enabled or not self._plan_active or self._sleep_held
                 or self._plan_activity == "nap"
                 or self._step_held_animation == SLEEP_ANIMATION
@@ -503,6 +576,8 @@ class AutonomyService(QObject):
         self._start_speech(trigger)
 
     def _start_speech(self, trigger: str) -> None:
+        if (self._is_external_owner() and trigger != "click"):
+            return
         if not self._enabled or self._busy or self._speech_busy:
             return
         if trigger != "click" and (not self._plan_active or self._sleep_held
@@ -680,6 +755,8 @@ class AutonomyService(QObject):
     def _tick(self, *, replan: bool = False):
         if not self._enabled:
             return
+        if self._is_external_owner() and not self._pending_user_text:
+            return
         if replan and not self._plan_active:
             return
         if self._plan_active and not replan:
@@ -842,7 +919,7 @@ class AutonomyService(QObject):
         replan_revision = self._replan_request_revision
         self._current_request_replan = False
         generation, intent = result
-        if generation != self._generation or not self._enabled:
+        if generation != self._generation or not self._enabled or (self._is_external_owner() and not self._current_request_user):
             self._monitor.publish(
                 busy=False, state="已关闭" if not self._enabled else "等待下一次决策")
             return
@@ -993,6 +1070,8 @@ class AutonomyService(QObject):
 
     def _advance_plan(self) -> None:
         """Execute one step on Qt's thread; an LLM refresh may replace future steps."""
+        if self._is_external_owner():
+            return
         if not self._plan_active or not self._enabled:
             return
         if self._sleep_held:

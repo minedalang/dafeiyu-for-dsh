@@ -269,7 +269,7 @@ def _dsh_version(base_command: list[str]) -> str | None:
     try:
         result = subprocess.run(
             [*base_command, "--version"],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8,
             cwd=str(Path.home()),
             env={**os.environ, "PATH": _augmented_path()},
             **_HIDDEN_KWARGS,
@@ -321,7 +321,7 @@ def _probe_no_open(base_command: list[str]) -> tuple[bool, bool]:
         result = subprocess.run(
             [*base_command, "web", "--help"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
             cwd=str(Path.home()),
             env={**os.environ, "PATH": _augmented_path()},
@@ -376,7 +376,7 @@ def _npm_global_roots() -> list[Path]:
     if npm is not None:
         try:
             result = subprocess.run(
-                [npm, "root", "-g"], capture_output=True, text=True, timeout=15,
+                [npm, "root", "-g"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
                 env={**os.environ, "PATH": _augmented_path()},
                 **_HIDDEN_KWARGS,
             )
@@ -828,7 +828,7 @@ def process_command_line(pid: int) -> str | None:
                     f"(Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}')"
                     ".CommandLine",
                 ],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, errors="replace", timeout=10,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
             if result.returncode != 0:
@@ -937,7 +937,7 @@ def _terminate_process_tree(pid: int, proc=None) -> bool:
     if os.name == "nt":
         result = subprocess.run(
             ["taskkill", "/PID", str(int(pid)), "/T", "/F"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, errors="replace", timeout=15,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
         if result.returncode != 0:

@@ -62,12 +62,7 @@ class WindowFeatureGateMixin:
 
     def _agent_link_wanted(self) -> bool:
         raw = self.cfg.get("agent_link", {})
-        if not isinstance(raw, dict):
-            return False
-        for key in ("dsh", "claude", "cursor", "opencode"):
-            if bool(raw.get(key, False)):
-                return True
-        return bool(raw.get("custom_agents"))
+        return isinstance(raw, dict) and bool(raw.get("dsh", False))
 
     # ------------------------------------------------------------ 懒创建
     def _ensure_proactive_watcher(self):

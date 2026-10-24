@@ -1463,6 +1463,8 @@ class AppShell:
         from .multi_window_shared import SharedSubsystems
 
         self._shared = SharedSubsystems(self)  # 4.4b：常开化（T6）
+        self._shared.agent_link.external_action_guard = self._dsh_action_guard
+        self._shared.agent_link.external_action_started = self._dsh_action_started
         # 订阅 DSH 统一状态（单读方合并后由共享 Agent 联动管理器转发；收敛逻辑
         # 是 pet/dsh_state.py 的纯函数，读方是 DshMonitor 自己）：
         # thinking/attention 注入与 offline 交互收口在管理器内部完成，这里只
@@ -2030,11 +2032,21 @@ class AppShell:
         _mac_set_dock_icon_visible(bool(self.config.get("show_dock_icon", True)))
 
     # ------------------------------------------------------------ AI 自主桌宠
+    def _dsh_action_guard(self, priority: str) -> tuple[bool, str]:
+        service = self._autonomy
+        if service is None:
+            return True, ""
+        return service.can_accept_dsh_reaction(priority)
+
+    def _dsh_action_started(self, duration: int, priority: str) -> None:
+        service = self._autonomy
+        if service is not None:
+            service.begin_dsh_reaction(duration, priority)
+
     def _on_user_chat_message(self, text: str) -> None:
         """Feed direct user requests into the same allowlisted pet planner."""
-        from .desktop_agent import task_from_message
-        if task_from_message(text) is not None:
-            return  # An explicitly delegated task is not a pet-life action trigger.
+        if text.strip().lower().startswith("/agent"):
+            return  # 旧命令不再触发本地生活决策，请在 DSH 中执行任务。
         service = getattr(self, "_autonomy", None)
         if service is not None and service.enabled:
             service.queue_user_message(text)
@@ -2186,6 +2198,11 @@ class AppShell:
                 sleep_dragging=self._autonomy_sleep_dragging)
         else:
             service.apply_config()
+        dsh_link = getattr(getattr(self, "_shared", None), "agent_link", None)
+        if dsh_link is not None and self._dsh_tracker_wanted():
+            # Existing manager emits changes for later transitions; this check
+            # covers enabling autonomy in the middle of an ongoing task.
+            service.set_dsh_busy(bool(getattr(dsh_link, "any_busy", lambda: False)()))
         if watcher is not None:
             watcher.set_decision_sink(None)  # independent proactive watch retired
 
@@ -3293,6 +3310,10 @@ class AppShell:
         island = getattr(self, "island", None)
         if island is not None and shiboken6.isValid(island):
             island.set_dsh_state(to_state)
+        service = getattr(self, "_autonomy", None)
+        if service is not None:
+            service.set_dsh_busy(to_state in (
+                "thinking", "working", "waiting_approval", "waiting_question"))
 
     # ------------------------------------------------------------ 退出收口
     def _on_about_to_quit(self) -> None:

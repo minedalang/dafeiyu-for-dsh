@@ -279,7 +279,7 @@ class QuickChatBubble(QFrame):
     def _new_session(self):
         session = self.store.create(
             self.character_id,
-            self.settings.conversation_provider_id,
+            self.settings.conversation_config.provider_id,
             self.prompt_builder.effective_system_prompt(self.settings, self.character_id),
         )
         self.store.save(session)
@@ -383,6 +383,12 @@ class QuickChatBubble(QFrame):
         text = self.input.text().strip()
         if not text:
             return
+        if text.lower().startswith("/agent") and (len(text) == 6 or text[6].isspace()):
+            self.input.clear()
+            self.hint_label.setText("请在 DSH 聊天窗口运行 Agent 任务")
+            self._set_reply_text("OpenClaw /agent 已移除；电脑任务请直接交给 DSH。")
+            self._render_reply()
+            return
         self.input.clear()
         # 陈旧快照防护（DS-M7 → R3 P1 硬修）：原子「读-追加-提交」
         synced, _absorbed = self.store.append_message(
@@ -405,20 +411,7 @@ class QuickChatBubble(QFrame):
             self.settings, self.character_id, self.session.messages[:-1], text
         )
         self._request_pet_window = self.pet_window
-        from .desktop_agent import task_from_message, OpenClawProvider
-        task = task_from_message(text)
-        agent_history = [
-            {"role": item.role, "content": item.content, "created_at": item.created_at}
-            for item in self.session.messages[:-1]
-            if getattr(item, "role", "") in ("user", "assistant")
-            and str(getattr(item, "content", "") or "").strip()
-        ] if task is not None else []
-        agent_provider = (OpenClawProvider(
-            self.config.get("desktop_agent", {}), self.session.session_id, task, history=agent_history
-        ) if task is not None else None)
-        if agent_provider is not None:
-            messages = []
-        self._active_request_id = self.service.send(messages, config, provider=agent_provider)
+        self._active_request_id = self.service.send(messages, config)
         self.user_message_sent.emit(text)
 
     def _started(self, request_id: str) -> None:

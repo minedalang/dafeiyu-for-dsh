@@ -40,7 +40,6 @@ from ..autonomy_speech import speech_interval_bounds
 
 class _AiSettingsPage(QWidget):
     test_done = Signal(bool, str)
-    agent_test_done = Signal(bool, str)
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
@@ -62,7 +61,6 @@ class _AiSettingsPage(QWidget):
         self._deleted_provider_ids: set[str] = set()
         self._loading_provider = False
         self.test_done.connect(self._on_test_done)
-        self.agent_test_done.connect(self._on_agent_test_done)
 
         self.provider_combo = ModernSelect(self, width=230)
         self.add_provider_btn = QPushButton("添加", self)
@@ -148,42 +146,6 @@ class _AiSettingsPage(QWidget):
         self.autonomy_effort = _line_edit(self.settings.autonomy_reasoning_effort)
         self.autonomy_effort.setMaxLength(64)
         self.autonomy_effort.setPlaceholderText("留空沿用自主 Provider；例如 low、medium、high")
-        # Desktop Agent: standalone operator Gateway, never reuses ordinary AI API key.
-        from ..desktop_agent import normalized_settings
-        agent = normalized_settings(config.get('desktop_agent', {}))
-        self.agent_enabled = ToggleSwitch()
-        self.agent_enabled.setChecked(agent['enabled'])
-        self.agent_url = _line_edit(agent['gateway_url'])
-        self.agent_url.setPlaceholderText('http://127.0.0.1:18789')
-        self.agent_model = _line_edit(agent['agent_model'])
-        self.agent_model.setPlaceholderText('openclaw/default')
-        self.agent_backend_model = _line_edit(agent['backend_model'])
-        self.agent_backend_model.setPlaceholderText('如 4router/模型ID；留空使用 OpenClaw 默认模型')
-        self.agent_thinking = ModernSelect(self, width=240)
-        for label, level in [('使用 OpenClaw 默认', 'default'), ('关闭思考', 'off'), ('Low', 'low'), ('Medium', 'medium'), ('High', 'high'), ('XHigh', 'xhigh'), ('Max', 'max'), ('Ultra', 'ultra')]:
-            self.agent_thinking.addItem(label, level)
-        self.agent_thinking.setCurrentData(agent['thinking_level'])
-        self.agent_context_summary = ToggleSwitch()
-        self.agent_context_summary.setChecked(agent['include_chat_context'])
-        self.agent_key = _line_edit(password=True)
-        self.agent_key.setPlaceholderText('已保存则留空；不会写入 config.json')
-        self.agent_allowed_windows = QPlainTextEdit(self)
-        self.agent_allowed_windows.setPlainText('\n'.join(agent['windows_allowlist']))
-        self.agent_allowed_windows.setPlaceholderText('每行一个可操作程序名，如 notepad.exe。空白名单禁止全部 Windows 工具。')
-        self.agent_allowed_windows.setFixedHeight(72)
-        self.agent_test_button = QPushButton('测试 OpenClaw 连接', self)
-        self.agent_test_result = QLabel('测试只读取 Agent 列表，不运行任务。', self)
-        self.agent_test_result.setWordWrap(True)
-        self._agent_test_thread = None
-        self._agent_edited = False
-        self.agent_enabled.toggled.connect(lambda _: setattr(self, '_agent_edited', True))
-        self.agent_url.textChanged.connect(lambda _: setattr(self, '_agent_edited', True))
-        self.agent_model.textChanged.connect(lambda _: setattr(self, '_agent_edited', True))
-        self.agent_backend_model.textChanged.connect(lambda _: setattr(self, '_agent_edited', True))
-        self.agent_thinking.currentIndexChanged.connect(lambda _: setattr(self, '_agent_edited', True))
-        self.agent_context_summary.toggled.connect(lambda _: setattr(self, '_agent_edited', True))
-        self.agent_allowed_windows.textChanged.connect(lambda: setattr(self, '_agent_edited', True))
-        self.agent_test_button.clicked.connect(self._run_agent_test)
         self.autonomy_interval = BrowserSpinBox()
         self.autonomy_interval.setRange(20, 300)
         self.autonomy_interval.setSuffix(" 秒")
@@ -312,14 +274,14 @@ class _AiSettingsPage(QWidget):
         root.addWidget(SettingsSection("API 列表", [
             SettingRow(
                 "provider_list", "API 列表",
-                "选择要编辑/切换的模型服务；保存后当前选中项会作为 active_provider 生效。",
+                "选择当前要编辑的 API 配置项。这里的选中状态不控制 AI 对话；聊天 API 请在 AI 对话窗口顶部单独选择。",
                 provider_row,
             ),
         ], self))
         root.addWidget(SettingsSection("模型与连接", [
             SettingRow("provider_name", "Provider 名称", "用于区分当前使用的模型服务。", self.name),
             SettingRow("api_protocol", "API 请求协议",
-                       "显式选择每个 Provider 使用的协议（无自动识别）；聊天、自主决策、主动搭话和联网检索共用。",
+                       "每个 Provider 单独保存协议（无自动识别）。AI 对话与自主行为分别按各自选定的 Provider 使用对应协议。",
                        self.api_protocol),
             SettingRow("api_url", "API 地址", "当前协议的 API 根地址，如 https://4router.net/v1。", self.url),
             SettingRow("model", "模型", "发送请求时使用的模型标识。", self.model),
@@ -358,38 +320,6 @@ class _AiSettingsPage(QWidget):
             SettingRow("web_search_fetch_pages", "允许阅读网页正文", "搜索摘要不够时，允许模型打开网页读取正文（更准，但更慢）。", self.web_search_fetch),
         ]
         root.addWidget(SettingsSection("深度思考与联网", thinking_web_rows, self))
-        root.addWidget(SettingsSection("电脑 Agent（OpenClaw，默认关闭）", [
-            SettingRow('desktop_agent_enabled', '允许手动 Agent 任务',
-                       '只有明确输入 /agent 加任务才会启动；自动聊天与自主决策不能操控电脑。',
-                       self.agent_enabled, parent=self),
-            SettingRow('desktop_agent_gateway', '本地 Gateway 地址',
-                       '只能连接 127.0.0.1 / localhost，默认 http://127.0.0.1:18789。',
-                       self.agent_url, parent=self),
-            SettingRow('desktop_agent_model', 'Agent 标识',
-                       'OpenClaw 的 Agent 入口（非 GPT 模型名），通常填写 openclaw/default。',
-                       self.agent_model, parent=self),
-            SettingRow('desktop_agent_backend_model', 'Agent 后端大模型',
-                       '填 OpenClaw 中真正的 provider/model ID；留空则使用该 Agent 的默认模型，不更改全局配置。',
-                       self.agent_backend_model, parent=self),
-            SettingRow('desktop_agent_thinking', 'Agent 思考深度',
-                       '每次任务单独指定 /think 等级；如果 OpenClaw 当前模型不支持，请选默认或该模型支持的值。',
-                       self.agent_thinking, parent=self),
-            SettingRow('desktop_agent_context_summary', '为 Agent 整理聊天背景',
-                       '仅在明确输入 /agent 时生效：最近最多 20 条纯文本由大肥鱼当前聊天模型压缩，发给 OpenClaw 的只有短摘要，不发送完整聊天记录、附件或截图。摘要可能有误；本次任务始终优先。关闭后只发送 /agent 后的任务原文。',
-                       self.agent_context_summary, parent=self),
-            SettingRow('desktop_agent_token', 'Gateway Token',
-                       '独立于 4Router API Key，保存在 Windows 系统凭据中；留空保留旧值。',
-                       self.agent_key, parent=self),
-            SettingRow('desktop_agent_allowed_windows', '允许操作的程序',
-                       '仅约束本补丁的 Windows MCP 工具，与识屏白名单无关；OpenClaw 自带 exec 等工具需在其后台单独限制。',
-                       self.agent_allowed_windows, stacked=True, parent=self),
-            SettingRow('desktop_agent_test', '测试网关',
-                       '只检测连接和凭据，不会启动 Agent。',
-                       self.agent_test_button, parent=self),
-            SettingRow('desktop_agent_test_result', '连接状态',
-                       '需要先在 OpenClaw 配置中开启 chatCompletions 接口。',
-                       self.agent_test_result, stacked=True, parent=self),
-        ], self))
         root.addWidget(SettingsSection("AI 自主行为", [
             SettingRow("autonomy_provider", "自主行为使用的 API", "必须选择一个独立的 Provider。旧版跟随对话配置会在首次加载时固定为当时选择的 API，不再随对话切换。", self.autonomy_provider_combo, parent=self),
             SettingRow("autonomy_model", "自主决策模型标识", "只影响自主决策、主动搭话和点击回应，留空使用对应 Provider 的模型，与聊天窗口的模型选择互不影响。", self.autonomy_model, parent=self),
@@ -1100,61 +1030,6 @@ class _AiSettingsPage(QWidget):
         self.test_result.setStyleSheet("color: #16843b;" if ok else "color: #c9362b;")
         self._test_thread = None
 
-    def _run_agent_test(self) -> None:
-        if self._agent_test_thread is not None and self._agent_test_thread.is_alive():
-            return
-        from ..desktop_agent import normalized_settings
-        settings = normalized_settings({'gateway_url': self.agent_url.text()})
-        token = self.agent_key.text().strip()
-        self.agent_test_button.setEnabled(False)
-        self.agent_test_result.setText('正在检测本地 Gateway…')
-        self._agent_test_thread = threading.Thread(
-            target=self._agent_test_worker, args=(settings, token), daemon=True,
-            name='pet-openclaw-connection-test')
-        self._agent_test_thread.start()
-
-    def _agent_test_worker(self, settings, token) -> None:
-        from ..desktop_agent import test_gateway
-        try:
-            result = test_gateway(settings, token=token)
-        except Exception as exc:
-            result = False, '配置错误：' + str(exc)
-        _safe_emit(self, 'agent_test_done', *result)
-
-    def _on_agent_test_done(self, ok: bool, message: str) -> None:
-        self.agent_test_button.setEnabled(True)
-        self.agent_test_result.setText(message)
-        self.agent_test_result.setStyleSheet('color: #16843b;' if ok else 'color: #c9362b;')
-        self._agent_test_thread = None
-
-    def _save_desktop_agent(self) -> None:
-        from ..desktop_agent import TOKEN_REF, normalized_settings
-        if self._agent_edited:
-            settings = normalized_settings({
-                'enabled': self.agent_enabled.isChecked(),
-                'gateway_url': self.agent_url.text(),
-                'agent_model': self.agent_model.text(),
-                'backend_model': self.agent_backend_model.text(),
-                'thinking_level': str(self.agent_thinking.currentData() or 'default'),
-                'include_chat_context': self.agent_context_summary.isChecked(),
-                'windows_allowlist': self.agent_allowed_windows.toPlainText(),
-            })
-            # Reject remote endpoints at save time, not only while dispatching.
-            from ..desktop_agent import gateway_endpoint
-            try:
-                gateway_endpoint(settings['gateway_url'], '/v1/models')
-            except ValueError as exc:
-                QMessageBox.warning(self, '电脑 Agent 地址无效', str(exc))
-                settings['enabled'] = False
-            self.config.set('desktop_agent', settings)
-            self._agent_edited = False
-        token = self.agent_key.text().strip()
-        if token:
-            if not self._secret_store_type().set(TOKEN_REF, token):
-                QMessageBox.warning(self, '安全存储不可用',
-                    'OpenClaw Token 无法写入系统凭据；未保存明文。请修复 keyring 或通过 OPENCLAW_GATEWAY_TOKEN 环境变量提供。')
-            self.agent_key.clear()
-
     def _speech_min_changed(self, _value) -> None:
         self._autonomy_edited.add("autonomy_speech_min_minutes")
         if self.autonomy_speech_min.value() > self.autonomy_speech_max.value():
@@ -1166,7 +1041,6 @@ class _AiSettingsPage(QWidget):
             self.autonomy_speech_min.setValue(self.autonomy_speech_max.value())
 
     def save(self) -> None:
-        self._save_desktop_agent()
         # 保存前基于磁盘最新配置重取快照：另一个设置窗口（AI 设置/桌宠设置 AI 页）
         # 可能在本窗口打开期间改过 Provider 结构；先保留本窗口的 provider 草稿/
         # 新增/删除，再与磁盘快照合并，避免覆盖其它窗口新增的结构。
